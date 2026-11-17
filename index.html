@@ -296,7 +296,7 @@ function step() {
   if (mouseY !== null) {
     L.y += (mouseY - PAD_H / 2 - L.y) * 0.35;
   } else {
-    L.y += ((keys['s'] ? 1 : 0) - (keys['w'] ? 1 : 0)) * 8;
+    L.y += ((keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0)) * 8;
   }
   L.y = Math.max(0, Math.min(H - PAD_H, L.y));
 
