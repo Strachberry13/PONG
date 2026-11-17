@@ -84,9 +84,9 @@ const DIFFS = {
   hard:   { aiSpeed: 6.2, err: 8 }
 };
 // Style « Nuit classique »
-const CLASSIC = { bg: '#0b0f1a', text: '#e6edf7', field: '#050810', line: '#24314d' };
+const CLASSIC = { bg: '#0b0f1a', text: '#e6edf7', field: '#050810', line: '#24314d', ball: '#e6ff00', glow: '#e6ff00' };
 // Style « Ghibli »
-const GHIBLI = { bg: '#dff0e4', text: '#2d3b2f', field: '#dff0e4', line: 'rgba(255,255,255,0.8)' };
+const GHIBLI = { bg: '#dff0e4', text: '#2d3b2f', field: '#dff0e4', line: 'rgba(255,255,255,0.8)', ball: '#ffb8e6', glow: '#ff8fd6' };
 // Images de fond fixes (à déposer à la racine du dépôt)
 const BG_IMAGES = { classic: 'bg-classic.jpg', ghibli: 'bg-ghibli.jpg' };
 
@@ -112,7 +112,7 @@ const keys = {};
 /* ---------- Profil et apparence (stockés dans le navigateur de ce poste) ---------- */
 
 const PROFILE_KEY = 'pong-profile-v1';
-const DEFAULT_LOOK = { style: 'classic', colL: '#4da3ff', colR: '#ff6b8a', colBall: '#ffffff' };
+const DEFAULT_LOOK = { style: 'classic', colL: '#4da3ff', colR: '#ff6b8a', colBall: null };
 
 function loadProfile() {
   let p = {};
@@ -122,6 +122,7 @@ function loadProfile() {
   } catch (e) {}
   const merged = { name: '', ...DEFAULT_LOOK, ...p };
   if (p.ghibli === true) merged.style = 'ghibli'; // ancienne case à cocher
+  if (merged.colBall === '#ffffff') merged.colBall = null; // ancienne couleur par défaut
   return merged;
 }
 function saveProfile() {
@@ -153,7 +154,7 @@ function syncLookInputs() {
   styleSel.value = profile.style;
   colLIn.value = profile.colL;
   colRIn.value = profile.colR;
-  colBallIn.value = profile.colBall;
+  colBallIn.value = profile.colBall || currentStyle().ball;
 }
 
 /* ---------- Compteurs ---------- */
@@ -402,8 +403,10 @@ function draw() {
   ctx.fillStyle = profile.colR;
   ctx.fillRect(R.x, R.y, PAD_W, PAD_H);
 
-  if (ghibli) { ctx.shadowColor = profile.colBall; ctx.shadowBlur = 14; }
-  ctx.fillStyle = profile.colBall;
+  // Balle : jaune fluo en nuit classique, rose pâle fluo en Ghibli
+  ctx.shadowColor = t.glow;
+  ctx.shadowBlur = 18;
+  ctx.fillStyle = profile.colBall || t.ball;
   ctx.beginPath(); ctx.arc(ball.x, ball.y, BALL, 0, Math.PI * 2); ctx.fill();
   ctx.shadowBlur = 0;
 }
