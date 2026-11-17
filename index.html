@@ -24,19 +24,10 @@
       <input id="pseudo" class="txt" maxlength="20" placeholder="Ton pseudo" autocomplete="off">
     </div>
 
-    <div id="twoPlayerGroup" style="display:none">
-      <div class="label">Noms des joueurs (même écran)</div>
-      <div class="row">
-        <input id="p2L" class="txt" maxlength="20" placeholder="Joueur gauche" autocomplete="off">
-        <input id="p2R" class="txt" maxlength="20" placeholder="Joueur droit" autocomplete="off">
-      </div>
-    </div>
-
     <div>
       <div class="label">Mode</div>
       <div class="row">
         <button class="opt on" data-mode="ai">Contre l'IA</button>
-        <button class="opt" data-mode="2p">À deux (même écran)</button>
         <button class="opt" data-mode="online">En ligne (code)</button>
       </div>
     </div>
@@ -67,13 +58,10 @@
     <details>
       <summary>Personnaliser l'affichage</summary>
       <div class="custom">
-        <label><input type="checkbox" id="ghibli"> Style Ghibli (ciel pastel et nuages)</label>
-        <label>Thème
-          <select id="theme" class="txt">
-            <option value="nuit">Nuit</option>
-            <option value="ocean">Océan</option>
-            <option value="neon">Néon</option>
-            <option value="clair">Clair</option>
+        <label>Style
+          <select id="style" class="txt">
+            <option value="classic">Nuit classique</option>
+            <option value="ghibli">Ghibli</option>
           </select>
         </label>
         <label>Raquette gauche <input type="color" id="colL"></label>
@@ -83,7 +71,7 @@
       </div>
     </details>
 
-    <div class="hint">Joueur gauche : W / S ou souris · Joueur droit : ↑ ↓ (mode à deux) · Espace : démarrer / pause · 7 points pour gagner</div>
+    <div class="hint">Joueur gauche : W / S ou souris · Espace : démarrer / pause · 7 points pour gagner</div>
   </div>
 </div>
 
@@ -95,13 +83,10 @@ const DIFFS = {
   medium: { aiSpeed: 4.2, err: 38 },
   hard:   { aiSpeed: 6.2, err: 8 }
 };
-const THEMES = {
-  nuit:  { bg: '#0b0f1a', text: '#e6edf7', field: '#050810', line: '#24314d' },
-  ocean: { bg: '#06202e', text: '#e0f7fa', field: '#0a3142', line: '#1d5870' },
-  neon:  { bg: '#05000f', text: '#f0e6ff', field: '#0d0220', line: '#7b2cbf' },
-  clair: { bg: '#eef2f8', text: '#1a2233', field: '#ffffff', line: '#b8c4d9' }
-};
-const GHIBLI_BG = { bg: '#dff0e4', text: '#2d3b2f', line: '#a9c9b0' };
+// Style « Nuit classique »
+const CLASSIC = { bg: '#0b0f1a', text: '#e6edf7', field: '#050810', line: '#24314d' };
+// Style « Ghibli »
+const GHIBLI = { bg: '#dff0e4', text: '#2d3b2f', field: '#dff0e4', line: 'rgba(255,255,255,0.8)' };
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const scoreEl = document.getElementById('score'), msgEl = document.getElementById('msg');
@@ -110,11 +95,9 @@ const statsEl = document.getElementById('stats'), menuStatsEl = document.getElem
 const menuEl = document.getElementById('menu'), diffGroup = document.getElementById('diffGroup');
 const onlineGroup = document.getElementById('onlineGroup'), netMsg = document.getElementById('netMsg');
 const playBtn = document.getElementById('play'), codeIn = document.getElementById('codeIn');
-const pseudoGroup = document.getElementById('pseudoGroup'), twoPlayerGroup = document.getElementById('twoPlayerGroup');
-const pseudoIn = document.getElementById('pseudo'), p2L = document.getElementById('p2L'), p2R = document.getElementById('p2R');
-const themeSel = document.getElementById('theme'), colLIn = document.getElementById('colL'),
-      colRIn = document.getElementById('colR'), colBallIn = document.getElementById('colBall'),
-      ghibliIn = document.getElementById('ghibli');
+const pseudoIn = document.getElementById('pseudo');
+const styleSel = document.getElementById('style'), colLIn = document.getElementById('colL'),
+      colRIn = document.getElementById('colR'), colBallIn = document.getElementById('colBall');
 
 let mode = 'ai', diff = 'medium';
 let L, R, ball, ls, rs, state = 'menu', mouseY = null, aiErr = 0, remoteY = 0;
@@ -127,14 +110,17 @@ const keys = {};
 /* ---------- Profil et apparence (stockés dans le navigateur de ce poste) ---------- */
 
 const PROFILE_KEY = 'pong-profile-v1';
-const DEFAULT_LOOK = { theme: 'nuit', colL: '#4da3ff', colR: '#ff6b8a', colBall: '#ffffff', ghibli: false };
+const DEFAULT_LOOK = { style: 'classic', colL: '#4da3ff', colR: '#ff6b8a', colBall: '#ffffff' };
 
 function loadProfile() {
+  let p = {};
   try {
-    const p = JSON.parse(localStorage.getItem(PROFILE_KEY));
-    if (p && typeof p === 'object') return { name: '', ...DEFAULT_LOOK, ...p };
+    const saved = JSON.parse(localStorage.getItem(PROFILE_KEY));
+    if (saved && typeof saved === 'object') p = saved;
   } catch (e) {}
-  return { name: '', ...DEFAULT_LOOK };
+  const merged = { name: '', ...DEFAULT_LOOK, ...p };
+  if (p.ghibli === true) merged.style = 'ghibli'; // ancienne case à cocher
+  return merged;
 }
 function saveProfile() {
   try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); } catch (e) {}
@@ -146,21 +132,23 @@ function sanitize(s, fallback) {
   return t || fallback;
 }
 
+function currentStyle() {
+  return profile.style === 'ghibli' ? GHIBLI : CLASSIC;
+}
+
 function applyLook() {
-  const base = THEMES[profile.theme] || THEMES.nuit;
-  const t = profile.ghibli ? GHIBLI_BG : base;
+  const t = currentStyle();
   document.body.style.background = t.bg;
   document.body.style.color = t.text;
-  cv.style.background = profile.ghibli ? '#dff0e4' : base.field;
-  cv.style.borderColor = t.line;
+  cv.style.background = t.field;
+  cv.style.borderColor = profile.style === 'ghibli' ? '#a9c9b0' : t.line;
   nLEl.style.color = profile.colL;
   nREl.style.color = profile.colR;
 }
 
 function syncLookInputs() {
   pseudoIn.value = profile.name;
-  ghibliIn.checked = !!profile.ghibli;
-  themeSel.value = profile.theme;
+  styleSel.value = profile.style;
   colLIn.value = profile.colL;
   colRIn.value = profile.colR;
   colBallIn.value = profile.colBall;
@@ -192,14 +180,13 @@ function finishGame(won) {
 }
 
 function statsText() {
-  if (mode === '2p') return 'Compteurs non disponibles en mode à deux sur un même écran.';
   const s = stats[mode === 'online' ? 'online' : 'ai'];
   const label = mode === 'online' ? 'En ligne' : "Contre l'IA";
   return label + ' — Victoires : ' + s.w + ' · Défaites : ' + s.l;
 }
 
 function updateStatsLine() {
-  statsEl.textContent = mode === '2p' ? '' : statsText();
+  statsEl.textContent = statsText();
   menuStatsEl.textContent = statsText();
 }
 
@@ -213,7 +200,6 @@ function setNames(l, r) {
 
 function computeNames() {
   if (mode === 'ai') return [sanitize(profile.name, 'Joueur'), 'IA'];
-  if (mode === '2p') return [sanitize(p2L.value, 'Joueur gauche'), sanitize(p2R.value, 'Joueur droit')];
   return [sanitize(profile.name, 'Hôte'), oppName || 'Adversaire'];
 }
 
@@ -221,7 +207,6 @@ function computeNames() {
 
 function helpText() {
   if (mode === 'online') return 'Espace ou clic pour démarrer (hôte) · Gauche : W / S ou souris';
-  if (mode === '2p') return 'Espace ou clic pour démarrer · Gauche : W / S ou souris · Droite : ↑ ↓';
   return 'Espace ou clic pour démarrer · ↑ ↓ ou W / S, ou la souris, pour jouer';
 }
 
@@ -254,8 +239,6 @@ function startGame() {
 function refreshMenu() {
   diffGroup.style.display = mode === 'ai' ? '' : 'none';
   onlineGroup.style.display = mode === 'online' ? '' : 'none';
-  pseudoGroup.style.display = mode === '2p' ? 'none' : '';
-  twoPlayerGroup.style.display = mode === '2p' ? '' : 'none';
   playBtn.style.display = mode === 'online' ? 'none' : '';
   updateStatsLine();
 }
@@ -314,10 +297,8 @@ function step() {
   }
   L.y = Math.max(0, Math.min(H - PAD_H, L.y));
 
-  // Raquette droite : flèches (2 joueurs), joueur distant (en ligne) ou IA
-  if (mode === '2p') {
-    R.y += ((keys['arrowdown'] ? 1 : 0) - (keys['arrowup'] ? 1 : 0)) * 8;
-  } else if (mode === 'online') {
+  // Raquette droite : joueur distant (en ligne) ou IA
+  if (mode === 'online') {
     R.y = remoteY;
   } else {
     const cfg = DIFFS[diff];
@@ -386,12 +367,13 @@ function drawGhibliBackground() {
 }
 
 function draw() {
-  const t = THEMES[profile.theme] || THEMES.nuit;
-  if (profile.ghibli) drawGhibliBackground();
+  const t = currentStyle();
+  const ghibli = profile.style === 'ghibli';
+  if (ghibli) drawGhibliBackground();
   else { ctx.fillStyle = t.field; ctx.fillRect(0, 0, W, H); }
 
   ctx.setLineDash([10, 12]);
-  ctx.strokeStyle = profile.ghibli ? 'rgba(255,255,255,0.8)' : t.line;
+  ctx.strokeStyle = t.line;
   ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
   ctx.setLineDash([]);
@@ -401,7 +383,7 @@ function draw() {
   ctx.fillStyle = profile.colR;
   ctx.fillRect(R.x, R.y, PAD_W, PAD_H);
 
-  if (profile.ghibli) { ctx.shadowColor = profile.colBall; ctx.shadowBlur = 14; }
+  if (ghibli) { ctx.shadowColor = profile.colBall; ctx.shadowBlur = 14; }
   ctx.fillStyle = profile.colBall;
   ctx.beginPath(); ctx.arc(ball.x, ball.y, BALL, 0, Math.PI * 2); ctx.fill();
   ctx.shadowBlur = 0;
@@ -570,13 +552,8 @@ pseudoIn.addEventListener('input', () => {
   profile.name = pseudoIn.value.trim().slice(0, 20);
   saveProfile();
 });
-ghibliIn.addEventListener('change', () => {
-  profile.ghibli = ghibliIn.checked;
-  saveProfile();
-  applyLook();
-});
-themeSel.addEventListener('change', () => {
-  profile.theme = themeSel.value;
+styleSel.addEventListener('change', () => {
+  profile.style = styleSel.value;
   saveProfile();
   applyLook();
 });
