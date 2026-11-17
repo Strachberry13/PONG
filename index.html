@@ -87,6 +87,8 @@ const DIFFS = {
 const CLASSIC = { bg: '#0b0f1a', text: '#e6edf7', field: '#050810', line: '#24314d' };
 // Style « Ghibli »
 const GHIBLI = { bg: '#dff0e4', text: '#2d3b2f', field: '#dff0e4', line: 'rgba(255,255,255,0.8)' };
+// Images de fond fixes (à déposer à la racine du dépôt)
+const BG_IMAGES = { classic: 'bg-classic.jpg', ghibli: 'bg-ghibli.jpg' };
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const scoreEl = document.getElementById('score'), msgEl = document.getElementById('msg');
@@ -366,10 +368,27 @@ function drawGhibliBackground() {
   ctx.fill();
 }
 
+const bgCache = {};
+
+function getBgImage(style) {
+  if (!(style in bgCache)) {
+    const img = new Image();
+    img.onload = () => { bgCache[style] = img; };
+    img.onerror = () => { bgCache[style] = null; }; // image absente : fond de secours
+    img.src = BG_IMAGES[style];
+    bgCache[style] = undefined; // en cours de chargement
+  }
+  return bgCache[style] || null;
+}
+
 function draw() {
   const t = currentStyle();
   const ghibli = profile.style === 'ghibli';
-  if (ghibli) drawGhibliBackground();
+  const img = getBgImage(profile.style);
+
+  // Fond : image fixe si elle existe, sinon le fond de secours
+  if (img) ctx.drawImage(img, 0, 0, W, H);
+  else if (ghibli) drawGhibliBackground();
   else { ctx.fillStyle = t.field; ctx.fillRect(0, 0, W, H); }
 
   ctx.setLineDash([10, 12]);
