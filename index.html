@@ -21,7 +21,8 @@
   .opt { flex:1; background:#1a2540; color:#c9d6ef; border:1px solid #24314d; }
   .opt.on { background:#2b6cff; color:#fff; border-color:#2b6cff; }
   .primary { font-size:1.1rem; padding:12px; }
-  .hint { font-size:.8rem; opacity:.6; text-align:center; line-height:1.5; }
+  .hint { font-size:.8rem; opacity:.7; text-align:center; line-height:1.5; min-height:1.2em; }
+  #codeIn { flex:1; padding:8px; border-radius:8px; border:1px solid #24314d; background:#0b0f1a; color:#fff; text-transform:uppercase; font-size:1rem; letter-spacing:.2em; min-width:0; }
   #bar { display:flex; gap:8px; }
 </style>
 </head>
@@ -40,7 +41,8 @@
       <div class="label">Mode</div>
       <div class="row">
         <button class="opt on" data-mode="ai">Contre l'IA</button>
-        <button class="opt" data-mode="2p">À deux joueurs</button>
+        <button class="opt" data-mode="2p">À deux (même écran)</button>
+        <button class="opt" data-mode="online">En ligne (code)</button>
       </div>
     </div>
     <div id="diffGroup">
@@ -51,11 +53,21 @@
         <button class="opt" data-diff="hard">Difficile</button>
       </div>
     </div>
+    <div id="onlineGroup" style="display:none">
+      <div class="label">En ligne</div>
+      <div class="row"><button id="hostBtn" class="opt">Créer une partie (je suis l'hôte)</button></div>
+      <div class="row" style="margin-top:10px">
+        <input id="codeIn" maxlength="6" placeholder="CODE" autocomplete="off">
+        <button id="joinBtn" class="opt">Rejoindre</button>
+      </div>
+    </div>
+    <div id="netMsg" class="hint"></div>
     <button id="play" class="primary">Jouer</button>
-    <div class="hint">Joueur gauche : W / S ou souris<br>Joueur droit (mode à deux) : ↑ ↓<br>Espace : démarrer / pause · première équipe à 7 points</div>
+    <div class="hint">Joueur gauche : W / S ou souris<br>Joueur droit : ↑ ↓ (mode à deux) · Espace : démarrer / pause · 7 points pour gagner</div>
   </div>
 </div>
 
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 const W = 800, H = 500, PAD_H = 90, PAD_W = 12, BALL = 9, WIN = 7;
 const DIFFS = {
@@ -67,15 +79,18 @@ const DIFFS = {
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const scoreEl = document.getElementById('score'), msgEl = document.getElementById('msg');
 const menuEl = document.getElementById('menu'), diffGroup = document.getElementById('diffGroup');
+const onlineGroup = document.getElementById('onlineGroup'), netMsg = document.getElementById('netMsg');
+const playBtn = document.getElementById('play'), codeIn = document.getElementById('codeIn');
 
 let mode = 'ai', diff = 'medium';
-let L, R, ball, ls, rs, state = 'menu', mouseY = null, aiErr = 0;
+let L, R, ball, ls, rs, state = 'menu', mouseY = null, aiErr = 0, remoteY = 0;
+let role = null, peer = null, conn = null, snap = null; // role : null | 'host' | 'guest'
 const keys = {};
 
 function helpText() {
-  return mode === '2p'
-    ? 'Espace ou clic pour démarrer · Gauche : W / S ou souris · Droite : ↑ ↓'
-    : 'Espace ou clic pour démarrer · ↑ ↓ ou W / S, ou la souris, pour jouer';
+  if (mode === 'online') return 'Espace ou clic pour démarrer (hôte) · Gauche : W / S ou souris';
+  if (mode === '2p') return 'Espace ou clic pour démarrer · Gauche : W / S ou souris · Droite : ↑ ↓';
+  return 'Espace ou clic pour démarrer · ↑ ↓ ou W / S, ou la souris, pour jouer';
 }
 
 function serve(dir) {
@@ -88,6 +103,7 @@ function updateScore() { scoreEl.textContent = ls + ' : ' + rs; }
 function reset() {
   L = { x: 24, y: H / 2 - PAD_H / 2 };
   R = { x: W - 24 - PAD_W, y: H / 2 - PAD_H / 2 };
+  remoteY = R.y;
   ls = 0; rs = 0; aiErr = 0;
   serve(1);
   updateScore();
@@ -100,16 +116,24 @@ function startGame() {
   msgEl.textContent = helpText();
 }
 
+function refreshMenu() {
+  diffGroup.style.display = mode === 'ai' ? '' : 'none';
+  onlineGroup.style.display = mode === 'online' ? '' : 'none';
+  playBtn.style.display = mode === 'online' ? 'none' : '';
+}
+
 function showMenu() {
+  destroyPeer();
   state = 'menu';
   menuEl.classList.remove('hidden');
-  diffGroup.style.display = mode === 'ai' ? '' : 'none';
+  refreshMenu();
   msgEl.textContent = '';
 }
 
 function togglePlay() {
   if (state === 'menu') return;
-  if (state === 'over') { startGame(); return; }
+  if (role === 'guest') { msgEl.textContent = "Seul l'hôte peut lancer ou mettre en pause la partie."; return; }
+  if (state === 'over') { if (mode === 'online') showMenu(); else startGame(); return; }
   if (state === 'ready') { state = 'playing'; msgEl.textContent = 'Espace pour mettre en pause'; }
   else if (state === 'playing') { state = 'paused'; msgEl.textContent = 'Pause · Espace pour reprendre'; }
   else if (state === 'paused') { state = 'playing'; msgEl.textContent = 'Espace pour mettre en pause'; }
@@ -130,9 +154,10 @@ function point(dir) {
   if (ls >= WIN || rs >= WIN) {
     state = 'over';
     let txt;
-    if (mode === '2p') txt = (ls >= WIN ? 'Joueur gauche gagne ! ' : 'Joueur droit gagne ! ');
+    if (mode === '2p' || mode === 'online') txt = (ls >= WIN ? 'Joueur gauche gagne ! ' : 'Joueur droit gagne ! ');
     else txt = (ls >= WIN ? 'Bravo, tu gagnes ! ' : "L'IA gagne cette fois. ");
-    msgEl.textContent = txt + 'Espace pour rejouer · Menu pour changer les réglages.';
+    const suffix = mode === 'online' ? 'Espace pour revenir au menu.' : 'Espace pour rejouer · Menu pour changer les réglages.';
+    msgEl.textContent = txt + suffix;
     return;
   }
   state = 'ready';
@@ -149,9 +174,11 @@ function step() {
   }
   L.y = Math.max(0, Math.min(H - PAD_H, L.y));
 
-  // Raquette droite : deuxième joueur (flèches) ou IA
+  // Raquette droite : flèches (2 joueurs), joueur distant (en ligne) ou IA
   if (mode === '2p') {
     R.y += ((keys['arrowdown'] ? 1 : 0) - (keys['arrowup'] ? 1 : 0)) * 8;
+  } else if (mode === 'online') {
+    R.y = remoteY;
   } else {
     const cfg = DIFFS[diff];
     const target = ball.y - PAD_H / 2 + aiErr;
@@ -174,7 +201,7 @@ function step() {
   if (ball.vx > 0 && ball.x + BALL >= R.x && ball.x + BALL <= R.x + PAD_W + 10 &&
       ball.y >= R.y && ball.y <= R.y + PAD_H) {
     bounce(R, -1);
-    aiErr = (Math.random() * 2 - 1) * DIFFS[diff].err; // imprécision de l'IA, selon la difficulté
+    aiErr = (Math.random() * 2 - 1) * DIFFS[diff].err;
   }
 
   // Points
@@ -198,13 +225,95 @@ function draw() {
   ctx.beginPath(); ctx.arc(ball.x, ball.y, BALL, 0, Math.PI * 2); ctx.fill();
 }
 
+/* ---------- En ligne ---------- */
+
+function genCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+function destroyPeer() {
+  if (conn) { try { conn.close(); } catch (e) {} conn = null; }
+  if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+  role = null;
+  snap = null;
+}
+
+function hostGame() {
+  destroyPeer();
+  const code = genCode();
+  role = 'host';
+  peer = new Peer('pong-' + code.toLowerCase());
+  netMsg.textContent = 'Code de connexion : ' + code + ' (usage unique). Donne-le à ton adversaire.';
+  peer.on('connection', c => {
+    if (conn) { c.close(); return; } // code déjà utilisé : refus
+    conn = c;
+    conn.on('data', d => { if (d && d.t === 'p') remoteY = d.y; });
+    conn.on('close', () => {
+      conn = null;
+      if (state !== 'over' && state !== 'menu') { state = 'paused'; msgEl.textContent = 'Adversaire déconnecté. Espace pour reprendre.'; }
+    });
+    startGame();
+    msgEl.textContent = 'Adversaire connecté ! ' + helpText();
+  });
+  peer.on('error', e => { netMsg.textContent = 'Erreur réseau : ' + e.type; });
+}
+
+function joinGame(code) {
+  destroyPeer();
+  role = 'guest';
+  netMsg.textContent = 'Connexion en cours…';
+  peer = new Peer();
+  peer.on('open', () => {
+    conn = peer.connect('pong-' + code.toLowerCase(), { reliable: true });
+    conn.on('open', () => {
+      state = 'guest';
+      menuEl.classList.add('hidden');
+      msgEl.textContent = "Connecté à l'hôte. En attente du lancement de la partie.";
+    });
+    conn.on('data', d => { if (d && d.t === 's') snap = d; });
+    conn.on('close', () => { msgEl.textContent = 'Connexion perdue ou partie terminée.'; });
+  });
+  peer.on('error', e => {
+    netMsg.textContent = e.type === 'peer-unavailable' ? 'Code invalide ou déjà utilisé.' : 'Erreur réseau : ' + e.type;
+    if (e.type === 'peer-unavailable') destroyPeer();
+  });
+}
+
+function sendSnapshot() {
+  if (role !== 'host' || !conn || !conn.open) return;
+  conn.send({ t: 's', b: [ball.x, ball.y], L: L.y, R: R.y, sc: [ls, rs], m: msgEl.textContent, st: state });
+}
+
+function guestFrame() {
+  if (!conn || !conn.open) return;
+  // Envoie la position de la raquette du joueur distant (droite)
+  if (mouseY !== null) R.y += (mouseY - PAD_H / 2 - R.y) * 0.35;
+  else R.y += ((keys['arrowdown'] ? 1 : 0) - (keys['arrowup'] ? 1 : 0)) * 8;
+  R.y = Math.max(0, Math.min(H - PAD_H, R.y));
+  conn.send({ t: 'p', y: R.y });
+  // Affiche l'état reçu de l'hôte
+  if (snap) {
+    ball.x = snap.b[0]; ball.y = snap.b[1];
+    L.y = snap.L;
+    ls = snap.sc[0]; rs = snap.sc[1];
+    updateScore();
+    if (snap.m && msgEl.textContent !== snap.m) msgEl.textContent = snap.m;
+  }
+}
+
 function loop() {
-  if (state === 'playing') step();
+  if (role === 'guest') guestFrame();
+  else if (role === 'host') { if (state === 'playing') step(); sendSnapshot(); }
+  else if (state === 'playing') step();
   draw();
   requestAnimationFrame(loop);
 }
 
-// Clavier
+/* ---------- Contrôles ---------- */
+
 document.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (['arrowup', 'arrowdown', ' ', 'w', 's'].includes(k)) e.preventDefault();
@@ -214,7 +323,6 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => { delete keys[e.key.toLowerCase()]; });
 
-// Souris
 cv.addEventListener('mousemove', e => {
   const r = cv.getBoundingClientRect();
   mouseY = (e.clientY - r.top) * (H / r.height);
@@ -222,7 +330,6 @@ cv.addEventListener('mousemove', e => {
 cv.addEventListener('mouseleave', () => { mouseY = null; });
 cv.addEventListener('click', togglePlay);
 
-// Tactile
 function touchY(e) {
   const r = cv.getBoundingClientRect();
   mouseY = (e.touches[0].clientY - r.top) * (H / r.height);
@@ -231,17 +338,25 @@ cv.addEventListener('touchstart', e => { e.preventDefault(); touchY(e); togglePl
 cv.addEventListener('touchmove', e => { e.preventDefault(); touchY(e); }, { passive: false });
 cv.addEventListener('touchend', () => { mouseY = null; });
 
-// Menu
+/* ---------- Menu ---------- */
+
 document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
   mode = b.dataset.mode;
   document.querySelectorAll('[data-mode]').forEach(x => x.classList.toggle('on', x === b));
-  diffGroup.style.display = mode === 'ai' ? '' : 'none';
+  netMsg.textContent = '';
+  refreshMenu();
 }));
 document.querySelectorAll('[data-diff]').forEach(b => b.addEventListener('click', () => {
   diff = b.dataset.diff;
   document.querySelectorAll('[data-diff]').forEach(x => x.classList.toggle('on', x === b));
 }));
-document.getElementById('play').addEventListener('click', startGame);
+document.getElementById('hostBtn').addEventListener('click', hostGame);
+document.getElementById('joinBtn').addEventListener('click', () => {
+  const code = codeIn.value.trim().toUpperCase();
+  if (code.length !== 6) { netMsg.textContent = 'Entre le code à 6 caractères.'; return; }
+  joinGame(code);
+});
+playBtn.addEventListener('click', startGame);
 document.getElementById('menuBtn').addEventListener('click', showMenu);
 
 reset();
