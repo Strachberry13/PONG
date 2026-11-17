@@ -34,6 +34,7 @@
   .custom { display:flex; flex-direction:column; gap:12px; margin-top:12px; }
   .custom label { display:flex; align-items:center; gap:8px; font-size:.9rem; }
   input[type=color] { width:44px; height:32px; border:0; background:none; padding:0; cursor:pointer; }
+  input[type=checkbox] { width:18px; height:18px; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -97,6 +98,7 @@
     <details>
       <summary>Personnaliser l'affichage</summary>
       <div class="custom">
+        <label><input type="checkbox" id="ghibli"> Style Ghibli (ciel pastel et nuages)</label>
         <label>Thème
           <select id="theme" class="txt">
             <option value="nuit">Nuit</option>
@@ -116,7 +118,7 @@
   </div>
 </div>
 
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script defer src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 const W = 800, H = 500, PAD_H = 90, PAD_W = 12, BALL = 9, WIN = 7;
 const DIFFS = {
@@ -130,6 +132,7 @@ const THEMES = {
   neon:  { bg: '#05000f', text: '#f0e6ff', field: '#0d0220', line: '#7b2cbf' },
   clair: { bg: '#eef2f8', text: '#1a2233', field: '#ffffff', line: '#b8c4d9' }
 };
+const GHIBLI_BG = { bg: '#dff0e4', text: '#2d3b2f', line: '#a9c9b0' };
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const scoreEl = document.getElementById('score'), msgEl = document.getElementById('msg');
@@ -141,7 +144,8 @@ const playBtn = document.getElementById('play'), codeIn = document.getElementByI
 const pseudoGroup = document.getElementById('pseudoGroup'), twoPlayerGroup = document.getElementById('twoPlayerGroup');
 const pseudoIn = document.getElementById('pseudo'), p2L = document.getElementById('p2L'), p2R = document.getElementById('p2R');
 const themeSel = document.getElementById('theme'), colLIn = document.getElementById('colL'),
-      colRIn = document.getElementById('colR'), colBallIn = document.getElementById('colBall');
+      colRIn = document.getElementById('colR'), colBallIn = document.getElementById('colBall'),
+      ghibliIn = document.getElementById('ghibli');
 
 let mode = 'ai', diff = 'medium';
 let L, R, ball, ls, rs, state = 'menu', mouseY = null, aiErr = 0, remoteY = 0;
@@ -154,7 +158,7 @@ const keys = {};
 /* ---------- Profil et apparence (stockés dans le navigateur de ce poste) ---------- */
 
 const PROFILE_KEY = 'pong-profile-v1';
-const DEFAULT_LOOK = { theme: 'nuit', colL: '#4da3ff', colR: '#ff6b8a', colBall: '#ffffff' };
+const DEFAULT_LOOK = { theme: 'nuit', colL: '#4da3ff', colR: '#ff6b8a', colBall: '#ffffff', ghibli: false };
 
 function loadProfile() {
   try {
@@ -174,10 +178,10 @@ function sanitize(s, fallback) {
 }
 
 function applyLook() {
-  const t = THEMES[profile.theme] || THEMES.nuit;
+  const t = profile.ghibli ? GHIBLI_BG : (THEMES[profile.theme] || THEMES.nuit);
   document.body.style.background = t.bg;
   document.body.style.color = t.text;
-  cv.style.background = t.field;
+  cv.style.background = profile.ghibli ? '#dff0e4' : (THEMES[profile.theme] || THEMES.nuit).field;
   cv.style.borderColor = t.line;
   nLEl.style.color = profile.colL;
   nREl.style.color = profile.colR;
@@ -185,6 +189,7 @@ function applyLook() {
 
 function syncLookInputs() {
   pseudoIn.value = profile.name;
+  ghibliIn.checked = !!profile.ghibli;
   themeSel.value = profile.theme;
   colLIn.value = profile.colL;
   colRIn.value = profile.colR;
@@ -374,21 +379,62 @@ function step() {
   else if (ball.x > W) { ls++; point(1); }
 }
 
+/* ---------- Dessin ---------- */
+
+function drawCloud(x, y, s) {
+  ctx.beginPath();
+  ctx.ellipse(x, y, 50 * s, 20 * s, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + 35 * s, y - 10 * s, 35 * s, 22 * s, 0, 0, Math.PI * 2);
+  ctx.ellipse(x - 35 * s, y - 6 * s, 30 * s, 18 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawGhibliBackground() {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#9fd8ef');
+  g.addColorStop(0.6, '#e6f4e8');
+  g.addColorStop(1, '#f7e7b4');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  // soleil
+  ctx.fillStyle = 'rgba(255,246,200,0.9)';
+  ctx.beginPath(); ctx.arc(W - 110, 90, 46, 0, Math.PI * 2); ctx.fill();
+  // nuages
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  drawCloud(150, 110, 1);
+  drawCloud(470, 70, 0.8);
+  drawCloud(640, 300, 1.1);
+  // colline
+  ctx.fillStyle = '#9ccf8a';
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  ctx.quadraticCurveTo(200, H - 70, 400, H - 30);
+  ctx.quadraticCurveTo(600, H - 80, W, H - 40);
+  ctx.lineTo(W, H);
+  ctx.closePath();
+  ctx.fill();
+}
+
 function draw() {
   const t = THEMES[profile.theme] || THEMES.nuit;
-  ctx.fillStyle = t.field;
-  ctx.fillRect(0, 0, W, H);
+  if (profile.ghibli) drawGhibliBackground();
+  else { ctx.fillStyle = t.field; ctx.fillRect(0, 0, W, H); }
+
   ctx.setLineDash([10, 12]);
-  ctx.strokeStyle = t.line;
+  ctx.strokeStyle = profile.ghibli ? 'rgba(255,255,255,0.8)' : t.line;
   ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
   ctx.setLineDash([]);
+
   ctx.fillStyle = profile.colL;
   ctx.fillRect(L.x, L.y, PAD_W, PAD_H);
   ctx.fillStyle = profile.colR;
   ctx.fillRect(R.x, R.y, PAD_W, PAD_H);
+
+  if (profile.ghibli) { ctx.shadowColor = profile.colBall; ctx.shadowBlur = 14; }
   ctx.fillStyle = profile.colBall;
   ctx.beginPath(); ctx.arc(ball.x, ball.y, BALL, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
 }
 
 /* ---------- En ligne ---------- */
@@ -409,6 +455,7 @@ function destroyPeer() {
 }
 
 function hostGame() {
+  if (typeof Peer === 'undefined') { netMsg.textContent = 'Le multijoueur ne se charge pas (vérifie ta connexion).'; return; }
   destroyPeer();
   const code = genCode();
   role = 'host';
@@ -438,6 +485,7 @@ function hostGame() {
 }
 
 function joinGame(code) {
+  if (typeof Peer === 'undefined') { netMsg.textContent = 'Le multijoueur ne se charge pas (vérifie ta connexion).'; return; }
   destroyPeer();
   role = 'guest';
   netMsg.textContent = 'Connexion en cours…';
@@ -518,74 +566,3 @@ cv.addEventListener('click', togglePlay);
 
 function touchY(e) {
   const r = cv.getBoundingClientRect();
-  mouseY = (e.touches[0].clientY - r.top) * (H / r.height);
-}
-cv.addEventListener('touchstart', e => { e.preventDefault(); touchY(e); togglePlay(); }, { passive: false });
-cv.addEventListener('touchmove', e => { e.preventDefault(); touchY(e); }, { passive: false });
-cv.addEventListener('touchend', () => { mouseY = null; });
-
-/* ---------- Menu ---------- */
-
-document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
-  mode = b.dataset.mode;
-  document.querySelectorAll('[data-mode]').forEach(x => x.classList.toggle('on', x === b));
-  netMsg.textContent = '';
-  refreshMenu();
-}));
-document.querySelectorAll('[data-diff]').forEach(b => b.addEventListener('click', () => {
-  diff = b.dataset.diff;
-  document.querySelectorAll('[data-diff]').forEach(x => x.classList.toggle('on', x === b));
-}));
-document.getElementById('hostBtn').addEventListener('click', hostGame);
-document.getElementById('joinBtn').addEventListener('click', () => {
-  const code = codeIn.value.trim().toUpperCase();
-  if (code.length !== 6) { netMsg.textContent = 'Entre le code à 6 caractères.'; return; }
-  joinGame(code);
-});
-document.getElementById('resetStats').addEventListener('click', () => {
-  stats = emptyStats();
-  saveStats();
-  updateStatsLine();
-});
-
-pseudoIn.addEventListener('input', () => {
-  profile.name = pseudoIn.value.trim().slice(0, 20);
-  saveProfile();
-});
-themeSel.addEventListener('change', () => {
-  profile.theme = themeSel.value;
-  saveProfile();
-  applyLook();
-});
-colLIn.addEventListener('input', () => {
-  profile.colL = colLIn.value;
-  saveProfile();
-  applyLook();
-});
-colRIn.addEventListener('input', () => {
-  profile.colR = colRIn.value;
-  saveProfile();
-  applyLook();
-});
-colBallIn.addEventListener('input', () => {
-  profile.colBall = colBallIn.value;
-  saveProfile();
-});
-document.getElementById('resetLook').addEventListener('click', () => {
-  profile = { ...profile, ...DEFAULT_LOOK };
-  saveProfile();
-  syncLookInputs();
-  applyLook();
-});
-
-playBtn.addEventListener('click', startGame);
-document.getElementById('menuBtn').addEventListener('click', showMenu);
-
-syncLookInputs();
-applyLook();
-reset();
-showMenu();
-loop();
-</script>
-</body>
-</html>
