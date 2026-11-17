@@ -8,6 +8,7 @@
   html, body { margin:0; height:100%; background:#0b0f1a; color:#e6edf7; font-family: system-ui, -apple-system, sans-serif; overflow:hidden; }
   #wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:10px; padding:10px; box-sizing:border-box; }
   #score { font-size:2.2rem; font-variant-numeric: tabular-nums; letter-spacing:.2em; }
+  #stats { font-size:.85rem; opacity:.7; min-height:1.2em; font-variant-numeric: tabular-nums; }
   canvas { background:#050810; border:2px solid #24314d; border-radius:10px; width:min(100%,800px); max-height:70vh; aspect-ratio:800/500; touch-action:none; cursor:none; }
   #msg { font-size:.95rem; opacity:.85; min-height:1.3em; text-align:center; }
   button { background:#2b6cff; color:#fff; border:0; border-radius:8px; padding:8px 16px; font-size:1rem; cursor:pointer; }
@@ -29,6 +30,7 @@
 <body>
 <div id="wrap">
   <div id="score">0 : 0</div>
+  <div id="stats"></div>
   <canvas id="c" width="800" height="500"></canvas>
   <div id="msg"></div>
   <div id="bar"><button id="menuBtn" class="ghost">Menu</button></div>
@@ -62,6 +64,8 @@
       </div>
     </div>
     <div id="netMsg" class="hint"></div>
+    <div id="menuStats" class="hint"></div>
+    <button id="resetStats" class="ghost">Réinitialiser les compteurs</button>
     <button id="play" class="primary">Jouer</button>
     <div class="hint">Joueur gauche : W / S ou souris<br>Joueur droit : ↑ ↓ (mode à deux) · Espace : démarrer / pause · 7 points pour gagner</div>
   </div>
@@ -78,6 +82,7 @@ const DIFFS = {
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const scoreEl = document.getElementById('score'), msgEl = document.getElementById('msg');
+const statsEl = document.getElementById('stats'), menuStatsEl = document.getElementById('menuStats');
 const menuEl = document.getElementById('menu'), diffGroup = document.getElementById('diffGroup');
 const onlineGroup = document.getElementById('onlineGroup'), netMsg = document.getElementById('netMsg');
 const playBtn = document.getElementById('play'), codeIn = document.getElementById('codeIn');
@@ -85,7 +90,48 @@ const playBtn = document.getElementById('play'), codeIn = document.getElementByI
 let mode = 'ai', diff = 'medium';
 let L, R, ball, ls, rs, state = 'menu', mouseY = null, aiErr = 0, remoteY = 0;
 let role = null, peer = null, conn = null, snap = null; // role : null | 'host' | 'guest'
+let resultSaved = false;
 const keys = {};
+
+/* ---------- Compteurs (stockés dans le navigateur de ce poste) ---------- */
+
+const STATS_KEY = 'pong-stats-v1';
+const emptyStats = () => ({ ai: { w: 0, l: 0 }, online: { w: 0, l: 0 } });
+
+function loadStats() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STATS_KEY));
+    return s && s.ai && s.online ? s : emptyStats();
+  } catch (e) { return emptyStats(); }
+}
+function saveStats() {
+  try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch (e) {}
+}
+
+let stats = loadStats();
+
+function finishGame(won) {
+  if (resultSaved) return;
+  resultSaved = true;
+  const k = mode === 'online' ? 'online' : 'ai';
+  if (won) stats[k].w++; else stats[k].l++;
+  saveStats();
+  updateStatsLine();
+}
+
+function statsText() {
+  if (mode === '2p') return 'Compteurs non disponibles en mode à deux sur un même écran.';
+  const s = stats[mode === 'online' ? 'online' : 'ai'];
+  const label = mode === 'online' ? 'En ligne' : "Contre l'IA";
+  return label + ' — Victoires : ' + s.w + ' · Défaites : ' + s.l;
+}
+
+function updateStatsLine() {
+  statsEl.textContent = mode === '2p' ? '' : statsText();
+  menuStatsEl.textContent = statsText();
+}
+
+/* ---------- Logique de jeu ---------- */
 
 function helpText() {
   if (mode === 'online') return 'Espace ou clic pour démarrer (hôte) · Gauche : W / S ou souris';
@@ -111,15 +157,18 @@ function reset() {
 
 function startGame() {
   reset();
+  resultSaved = false;
   state = 'ready';
   menuEl.classList.add('hidden');
   msgEl.textContent = helpText();
+  updateStatsLine();
 }
 
 function refreshMenu() {
   diffGroup.style.display = mode === 'ai' ? '' : 'none';
   onlineGroup.style.display = mode === 'online' ? '' : 'none';
   playBtn.style.display = mode === 'online' ? 'none' : '';
+  updateStatsLine();
 }
 
 function showMenu() {
@@ -153,6 +202,8 @@ function point(dir) {
   updateScore();
   if (ls >= WIN || rs >= WIN) {
     state = 'over';
+    // Le compteur est enregistré sur le poste de l'hôte (gauche) ou contre l'IA
+    if (mode === 'ai' || (mode === 'online' && role === 'host')) finishGame(ls >= WIN);
     let txt;
     if (mode === '2p' || mode === 'online') txt = (ls >= WIN ? 'Joueur gauche gagne ! ' : 'Joueur droit gagne ! ');
     else txt = (ls >= WIN ? 'Bravo, tu gagnes ! ' : "L'IA gagne cette fois. ");
@@ -270,8 +321,10 @@ function joinGame(code) {
     conn = peer.connect('pong-' + code.toLowerCase(), { reliable: true });
     conn.on('open', () => {
       state = 'guest';
+      resultSaved = false;
       menuEl.classList.add('hidden');
       msgEl.textContent = "Connecté à l'hôte. En attente du lancement de la partie.";
+      updateStatsLine();
     });
     conn.on('data', d => { if (d && d.t === 's') snap = d; });
     conn.on('close', () => { msgEl.textContent = 'Connexion perdue ou partie terminée.'; });
@@ -289,7 +342,7 @@ function sendSnapshot() {
 
 function guestFrame() {
   if (!conn || !conn.open) return;
-  // Envoie la position de la raquette du joueur distant (droite)
+  // Raquette du joueur distant (droite), envoyée à l'hôte
   if (mouseY !== null) R.y += (mouseY - PAD_H / 2 - R.y) * 0.35;
   else R.y += ((keys['arrowdown'] ? 1 : 0) - (keys['arrowup'] ? 1 : 0)) * 8;
   R.y = Math.max(0, Math.min(H - PAD_H, R.y));
@@ -301,6 +354,8 @@ function guestFrame() {
     ls = snap.sc[0]; rs = snap.sc[1];
     updateScore();
     if (snap.m && msgEl.textContent !== snap.m) msgEl.textContent = snap.m;
+    // Compteur du joueur invité, enregistré sur son propre poste
+    if (snap.st === 'over') finishGame(rs >= WIN);
   }
 }
 
@@ -355,6 +410,11 @@ document.getElementById('joinBtn').addEventListener('click', () => {
   const code = codeIn.value.trim().toUpperCase();
   if (code.length !== 6) { netMsg.textContent = 'Entre le code à 6 caractères.'; return; }
   joinGame(code);
+});
+document.getElementById('resetStats').addEventListener('click', () => {
+  stats = emptyStats();
+  saveStats();
+  updateStatsLine();
 });
 playBtn.addEventListener('click', startGame);
 document.getElementById('menuBtn').addEventListener('click', showMenu);
