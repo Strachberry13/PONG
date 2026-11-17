@@ -64,9 +64,6 @@
             <option value="ghibli">Ghibli</option>
           </select>
         </label>
-        <label>Raquette gauche <input type="color" id="colL"></label>
-        <label>Raquette droite <input type="color" id="colR"></label>
-        <label>Balle <input type="color" id="colBall"></label>
         <label><input type="checkbox" id="music"> Musique de fond</label>
         <label>Volume musique <input type="range" id="volume" min="0" max="1" step="0.05"></label>
         <button id="resetLook" class="ghost">Réinitialiser l'apparence</button>
@@ -100,8 +97,7 @@ const menuEl = document.getElementById('menu'), diffGroup = document.getElementB
 const onlineGroup = document.getElementById('onlineGroup'), netMsg = document.getElementById('netMsg');
 const playBtn = document.getElementById('play'), codeIn = document.getElementById('codeIn');
 const pseudoIn = document.getElementById('pseudo');
-const styleSel = document.getElementById('style'), colLIn = document.getElementById('colL'),
-      colRIn = document.getElementById('colR'), colBallIn = document.getElementById('colBall');
+const styleSel = document.getElementById('style');
 
 let mode = 'ai', diff = 'medium';
 let L, R, ball, ls, rs, state = 'menu', mouseY = null, aiErr = 0, remoteY = 0;
@@ -114,7 +110,9 @@ const keys = {};
 /* ---------- Profil et apparence (stockés dans le navigateur de ce poste) ---------- */
 
 const PROFILE_KEY = 'pong-profile-v1';
-const DEFAULT_LOOK = { style: 'classic', colL: '#4da3ff', colR: '#ff6b8a', colBall: null, music: true, volume: 0.3 };
+// Couleurs fixes des raquettes (la personnalisation des couleurs est désactivée)
+const PADDLE_LEFT = '#4da3ff', PADDLE_RIGHT = '#ff6b8a';
+const DEFAULT_LOOK = { style: 'classic', music: true, volume: 0.3 };
 
 function loadProfile() {
   let p = {};
@@ -147,16 +145,13 @@ function applyLook() {
   document.body.style.color = t.text;
   cv.style.background = t.field;
   cv.style.borderColor = profile.style === 'ghibli' ? '#a9c9b0' : t.line;
-  nLEl.style.color = profile.colL;
-  nREl.style.color = profile.colR;
+  nLEl.style.color = PADDLE_LEFT;
+  nREl.style.color = PADDLE_RIGHT;
 }
 
 function syncLookInputs() {
   pseudoIn.value = profile.name;
   styleSel.value = profile.style;
-  colLIn.value = profile.colL;
-  colRIn.value = profile.colR;
-  colBallIn.value = profile.colBall || currentStyle().ball;
   musicIn.checked = !!profile.music;
   volumeIn.value = profile.volume;
 }
@@ -402,15 +397,15 @@ function draw() {
   ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
   ctx.setLineDash([]);
 
-  ctx.fillStyle = profile.colL;
+  ctx.fillStyle = PADDLE_LEFT;
   ctx.fillRect(L.x, L.y, PAD_W, PAD_H);
-  ctx.fillStyle = profile.colR;
+  ctx.fillStyle = PADDLE_RIGHT;
   ctx.fillRect(R.x, R.y, PAD_W, PAD_H);
 
   // Balle : jaune fluo en nuit classique, rose pâle fluo en Ghibli
   ctx.shadowColor = t.glow;
   ctx.shadowBlur = 18;
-  ctx.fillStyle = profile.colBall || t.ball;
+  ctx.fillStyle = t.ball;
   ctx.beginPath(); ctx.arc(ball.x, ball.y, BALL, 0, Math.PI * 2); ctx.fill();
   ctx.shadowBlur = 0;
 }
@@ -649,20 +644,6 @@ styleSel.addEventListener('change', () => {
   profile.style = styleSel.value;
   saveProfile();
   applyLook();
-});
-colLIn.addEventListener('input', () => {
-  profile.colL = colLIn.value;
-  saveProfile();
-  applyLook();
-});
-colRIn.addEventListener('input', () => {
-  profile.colR = colRIn.value;
-  saveProfile();
-  applyLook();
-});
-colBallIn.addEventListener('input', () => {
-  profile.colBall = colBallIn.value;
-  saveProfile();
 });
 document.getElementById('resetLook').addEventListener('click', () => {
   profile = { ...profile, ...DEFAULT_LOOK };
