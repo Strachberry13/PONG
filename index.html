@@ -589,9 +589,11 @@ function loop() {
 /* ---------- Contrôles ---------- */
 
 document.addEventListener('keydown', e => {
+  // Ne pas intercepter la saisie dans les champs (pseudo, code, menus)
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
   const k = e.key.toLowerCase();
-  if (['arrowup', 'arrowdown', ' ', 'w', 's'].includes(k)) e.preventDefault();
   if (state === 'menu') return;
+  if (['arrowup', 'arrowdown', ' ', 'w', 's'].includes(k)) e.preventDefault();
   if (k === ' ') { togglePlay(); return; }
   keys[k] = true;
 });
