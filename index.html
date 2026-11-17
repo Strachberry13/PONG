@@ -64,9 +64,8 @@
             <option value="ghibli">Ghibli</option>
           </select>
         </label>
-        <label>Raquette gauche <input type="color" id="colL"></label>
-        <label>Raquette droite <input type="color" id="colR"></label>
-        <label>Balle <input type="color" id="colBall"></label>
+        <label><input type="checkbox" id="music"> Musique de fond</label>
+        <label>Volume musique <input type="range" id="volume" min="0" max="1" step="0.05"></label>
         <button id="resetLook" class="ghost">Réinitialiser l'apparence</button>
       </div>
     </details>
@@ -84,9 +83,9 @@ const DIFFS = {
   hard:   { aiSpeed: 6.2, err: 8 }
 };
 // Style « Nuit classique »
-const CLASSIC = { bg: '#0b0f1a', text: '#e6edf7', field: '#050810', line: '#24314d' };
+const CLASSIC = { bg: '#0b0f1a', text: '#e6edf7', field: '#050810', line: '#24314d', ball: '#e6ff00', glow: '#e6ff00' };
 // Style « Ghibli »
-const GHIBLI = { bg: '#dff0e4', text: '#2d3b2f', field: '#dff0e4', line: 'rgba(255,255,255,0.8)' };
+const GHIBLI = { bg: '#dff0e4', text: '#2d3b2f', field: '#dff0e4', line: 'rgba(255,255,255,0.8)', ball: '#ffb8e6', glow: '#ff8fd6' };
 // Images de fond fixes (à déposer à la racine du dépôt)
 const BG_IMAGES = { classic: 'bg-classic.jpg', ghibli: 'bg-ghibli.jpg' };
 
@@ -98,8 +97,7 @@ const menuEl = document.getElementById('menu'), diffGroup = document.getElementB
 const onlineGroup = document.getElementById('onlineGroup'), netMsg = document.getElementById('netMsg');
 const playBtn = document.getElementById('play'), codeIn = document.getElementById('codeIn');
 const pseudoIn = document.getElementById('pseudo');
-const styleSel = document.getElementById('style'), colLIn = document.getElementById('colL'),
-      colRIn = document.getElementById('colR'), colBallIn = document.getElementById('colBall');
+const styleSel = document.getElementById('style');
 
 let mode = 'ai', diff = 'medium';
 let L, R, ball, ls, rs, state = 'menu', mouseY = null, aiErr = 0, remoteY = 0;
@@ -112,7 +110,9 @@ const keys = {};
 /* ---------- Profil et apparence (stockés dans le navigateur de ce poste) ---------- */
 
 const PROFILE_KEY = 'pong-profile-v1';
-const DEFAULT_LOOK = { style: 'classic', colL: '#4da3ff', colR: '#ff6b8a', colBall: '#ffffff' };
+// Couleurs fixes des raquettes (la personnalisation des couleurs est désactivée)
+const PADDLE_LEFT = '#4da3ff', PADDLE_RIGHT = '#ff6b8a';
+const DEFAULT_LOOK = { style: 'classic', music: true, volume: 0.3 };
 
 function loadProfile() {
   let p = {};
@@ -122,6 +122,7 @@ function loadProfile() {
   } catch (e) {}
   const merged = { name: '', ...DEFAULT_LOOK, ...p };
   if (p.ghibli === true) merged.style = 'ghibli'; // ancienne case à cocher
+  if (merged.colBall === '#ffffff') merged.colBall = null; // ancienne couleur par défaut
   return merged;
 }
 function saveProfile() {
@@ -144,16 +145,15 @@ function applyLook() {
   document.body.style.color = t.text;
   cv.style.background = t.field;
   cv.style.borderColor = profile.style === 'ghibli' ? '#a9c9b0' : t.line;
-  nLEl.style.color = profile.colL;
-  nREl.style.color = profile.colR;
+  nLEl.style.color = PADDLE_LEFT;
+  nREl.style.color = PADDLE_RIGHT;
 }
 
 function syncLookInputs() {
   pseudoIn.value = profile.name;
   styleSel.value = profile.style;
-  colLIn.value = profile.colL;
-  colRIn.value = profile.colR;
-  colBallIn.value = profile.colBall;
+  musicIn.checked = !!profile.music;
+  volumeIn.value = profile.volume;
 }
 
 /* ---------- Compteurs ---------- */
@@ -295,7 +295,7 @@ function step() {
   if (mouseY !== null) {
     L.y += (mouseY - PAD_H / 2 - L.y) * 0.35;
   } else {
-    L.y += ((keys['s'] ? 1 : 0) - (keys['w'] ? 1 : 0)) * 8;
+    L.y += ((keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0)) * 8;
   }
   L.y = Math.max(0, Math.min(H - PAD_H, L.y));
 
@@ -397,15 +397,84 @@ function draw() {
   ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
   ctx.setLineDash([]);
 
-  ctx.fillStyle = profile.colL;
+  ctx.fillStyle = PADDLE_LEFT;
   ctx.fillRect(L.x, L.y, PAD_W, PAD_H);
-  ctx.fillStyle = profile.colR;
+  ctx.fillStyle = PADDLE_RIGHT;
   ctx.fillRect(R.x, R.y, PAD_W, PAD_H);
 
-  if (ghibli) { ctx.shadowColor = profile.colBall; ctx.shadowBlur = 14; }
-  ctx.fillStyle = profile.colBall;
+  // Balle : jaune fluo en nuit classique, rose pâle fluo en Ghibli
+  ctx.shadowColor = t.glow;
+  ctx.shadowBlur = 18;
+  ctx.fillStyle = t.ball;
   ctx.beginPath(); ctx.arc(ball.x, ball.y, BALL, 0, Math.PI * 2); ctx.fill();
   ctx.shadowBlur = 0;
+}
+
+/* ---------- Musique (générée dans le navigateur, sans fichier) ---------- */
+
+const musicIn = document.getElementById('music'), volumeIn = document.getElementById('volume');
+const NOTE_OFFSET = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const MUSIC = {
+  classic: { bpm: 84, wave: 'triangle', notes: ['A2', 'E3', 'A3', 'C4', 'E4', 'C4', 'A3', 'E3'] },
+  ghibli:  { bpm: 96, wave: 'sine',     notes: ['C5', 'D5', 'E5', 'G5', 'A5', 'G5', 'E5', 'D5'] }
+};
+
+function noteFreq(name) {
+  const m = /^([A-G])(\d)$/.exec(name);
+  const midi = (parseInt(m[2], 10) + 1) * 12 + NOTE_OFFSET[m[1]];
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+let audioCtx = null, musicGain = null, musicTimer = null, nextNoteTime = 0, noteIdx = 0;
+
+function ensureAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    musicGain = audioCtx.createGain();
+    musicGain.connect(audioCtx.destination);
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function applyVolume() {
+  if (musicGain) musicGain.gain.value = profile.music ? profile.volume : 0;
+}
+
+function playNote(name, when, dur, wave) {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = wave;
+  o.frequency.value = noteFreq(name);
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(0.25, when + 0.03);
+  g.gain.linearRampToValueAtTime(0, when + dur);
+  o.connect(g);
+  g.connect(musicGain);
+  o.start(when);
+  o.stop(when + dur + 0.05);
+}
+
+function scheduleMusic() {
+  const cfg = MUSIC[profile.style === 'ghibli' ? 'ghibli' : 'classic'];
+  const beat = 60 / cfg.bpm;
+  while (nextNoteTime < audioCtx.currentTime + 0.3) {
+    playNote(cfg.notes[noteIdx % cfg.notes.length], nextNoteTime, beat * 0.9, cfg.wave);
+    nextNoteTime += beat;
+    noteIdx++;
+  }
+}
+
+function startMusic() {
+  if (!profile.music || musicTimer) return;
+  ensureAudio();
+  applyVolume();
+  nextNoteTime = audioCtx.currentTime + 0.1;
+  musicTimer = setInterval(scheduleMusic, 100);
+}
+
+function stopMusic() {
+  if (musicTimer) { clearInterval(musicTimer); musicTimer = null; }
+  applyVolume();
 }
 
 /* ---------- En ligne ---------- */
@@ -576,25 +645,25 @@ styleSel.addEventListener('change', () => {
   saveProfile();
   applyLook();
 });
-colLIn.addEventListener('input', () => {
-  profile.colL = colLIn.value;
-  saveProfile();
-  applyLook();
-});
-colRIn.addEventListener('input', () => {
-  profile.colR = colRIn.value;
-  saveProfile();
-  applyLook();
-});
-colBallIn.addEventListener('input', () => {
-  profile.colBall = colBallIn.value;
-  saveProfile();
-});
 document.getElementById('resetLook').addEventListener('click', () => {
   profile = { ...profile, ...DEFAULT_LOOK };
   saveProfile();
   syncLookInputs();
   applyLook();
+});
+
+// La musique démarre après le premier clic ou la première touche (règle des navigateurs)
+document.addEventListener('pointerdown', startMusic);
+document.addEventListener('keydown', startMusic);
+musicIn.addEventListener('change', () => {
+  profile.music = musicIn.checked;
+  saveProfile();
+  if (profile.music) startMusic(); else stopMusic();
+});
+volumeIn.addEventListener('input', () => {
+  profile.volume = parseFloat(volumeIn.value);
+  saveProfile();
+  applyVolume();
 });
 
 playBtn.addEventListener('click', startGame);
