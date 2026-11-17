@@ -28,6 +28,7 @@
       <div class="label">Mode</div>
       <div class="row">
         <button class="opt on" data-mode="ai">Contre l'IA</button>
+        <button class="opt" data-mode="campaign">Campagne (niveaux)</button>
         <button class="opt" data-mode="online">En ligne (code)</button>
       </div>
     </div>
@@ -41,6 +42,10 @@
       </div>
     </div>
 
+    <div id="campGroup" style="display:none">
+      <div id="campInfo" class="hint"></div>
+    </div>
+
     <div id="onlineGroup" style="display:none">
       <div class="label">En ligne</div>
       <div class="row"><button id="hostBtn" class="opt">Créer une partie (je suis l'hôte)</button></div>
@@ -52,7 +57,7 @@
 
     <div id="netMsg" class="hint"></div>
     <div id="menuStats" class="hint"></div>
-    <button id="resetStats" class="ghost">Réinitialiser les compteurs</button>
+    <button id="resetStats" class="ghost">Réinitialiser compteurs et campagne</button>
     <button id="play" class="primary">Jouer</button>
 
     <details>
@@ -60,7 +65,7 @@
       <div class="custom">
         <label>Style
           <select id="style" class="txt">
-            <option value="classic">Nuit classique</option>
+            <option value="tron">Tron</option>
             <option value="ghibli">Ghibli</option>
           </select>
         </label>
@@ -76,24 +81,23 @@
 
 <script defer src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
-const W = 800, H = 500, PAD_H = 90, PAD_W = 12, BALL = 9, WIN = 7;
+const W = 800, H = 500, PAD_H = 90, PAD_W = 12, BALL = 9, WIN = 7, MAX_LEVEL = 10;
 const DIFFS = {
   easy:   { aiSpeed: 2.6, err: 90 },
   medium: { aiSpeed: 4.2, err: 38 },
   hard:   { aiSpeed: 6.2, err: 8 }
 };
-// Style « Nuit classique »
-const CLASSIC = { bg: '#0b0f1a', text: '#e6edf7', field: '#050810', line: '#24314d', ball: '#e6ff00', glow: '#e6ff00' };
-// Style « Ghibli »
-const GHIBLI = { bg: '#dff0e4', text: '#2d3b2f', field: '#dff0e4', line: 'rgba(255,255,255,0.8)', ball: '#ffb8e6', glow: '#ff8fd6' };
-// Images de fond fixes (à déposer à la racine du dépôt)
-const BG_IMAGES = { classic: 'bg-classic.jpg', ghibli: 'bg-ghibli.jpg' };
+// Style « Tron » : grille néon, balle jaune fluo
+const TRON = { bg: '#050812', text: '#e6edf7', field: '#03060d', line: '#1d3a52', ball: '#e6ff00', glow: '#e6ff00', accent: '#00e5ff' };
+// Style « Ghibli » : ciel, collines, esprits de suie, feuilles ; balle rose pâle fluo
+const GHIBLI = { bg: '#dff0e4', text: '#2d3b2f', field: '#dff0e4', line: 'rgba(255,255,255,0.8)', ball: '#ffb8e6', glow: '#ff8fd6', accent: '#ffffff' };
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const scoreEl = document.getElementById('score'), msgEl = document.getElementById('msg');
 const nLEl = document.getElementById('nL'), nREl = document.getElementById('nR');
 const statsEl = document.getElementById('stats'), menuStatsEl = document.getElementById('menuStats');
 const menuEl = document.getElementById('menu'), diffGroup = document.getElementById('diffGroup');
+const campGroup = document.getElementById('campGroup'), campInfo = document.getElementById('campInfo');
 const onlineGroup = document.getElementById('onlineGroup'), netMsg = document.getElementById('netMsg');
 const playBtn = document.getElementById('play'), codeIn = document.getElementById('codeIn');
 const pseudoIn = document.getElementById('pseudo');
@@ -107,12 +111,17 @@ let names = ['', ''];   // [gauche, droite] affichés sur ce poste
 let oppName = '';      // pseudo de l'adversaire en ligne (côté hôte)
 const keys = {};
 
+// Campagne : vitesse de la balle, événements et tick (1 tick = 1 image de jeu)
+let curLevel = 1, baseSpeed = 5, tick = 0;
+let obstacles = [], orbs = [], pulseFlash = 0, nextOrbAt = 0, nextPulseAt = 0;
+let bigUntil = { L: 0, R: 0 }, lastHit = null;
+
 /* ---------- Profil et apparence (stockés dans le navigateur de ce poste) ---------- */
 
 const PROFILE_KEY = 'pong-profile-v1';
 // Couleurs fixes des raquettes (la personnalisation des couleurs est désactivée)
 const PADDLE_LEFT = '#4da3ff', PADDLE_RIGHT = '#ff6b8a';
-const DEFAULT_LOOK = { style: 'classic', music: true, volume: 0.3 };
+const DEFAULT_LOOK = { style: 'tron', music: true, volume: 0.3 };
 
 function loadProfile() {
   let p = {};
@@ -122,6 +131,7 @@ function loadProfile() {
   } catch (e) {}
   const merged = { name: '', ...DEFAULT_LOOK, ...p };
   if (p.ghibli === true) merged.style = 'ghibli'; // ancienne case à cocher
+  if (merged.style === 'classic') merged.style = 'tron'; // ancien nom du style
   if (merged.colBall === '#ffffff') merged.colBall = null; // ancienne couleur par défaut
   return merged;
 }
@@ -136,7 +146,7 @@ function sanitize(s, fallback) {
 }
 
 function currentStyle() {
-  return profile.style === 'ghibli' ? GHIBLI : CLASSIC;
+  return profile.style === 'ghibli' ? GHIBLI : TRON;
 }
 
 function applyLook() {
@@ -156,15 +166,15 @@ function syncLookInputs() {
   volumeIn.value = profile.volume;
 }
 
-/* ---------- Compteurs ---------- */
+/* ---------- Compteurs et progression de campagne ---------- */
 
 const STATS_KEY = 'pong-stats-v1';
-const emptyStats = () => ({ ai: { w: 0, l: 0 }, online: { w: 0, l: 0 } });
+const emptyStats = () => ({ ai: { w: 0, l: 0 }, online: { w: 0, l: 0 }, campaign: { w: 0, l: 0 } });
 
 function loadStats() {
   try {
     const s = JSON.parse(localStorage.getItem(STATS_KEY));
-    return s && s.ai && s.online ? s : emptyStats();
+    return s && s.ai && s.online ? { ...emptyStats(), ...s } : emptyStats();
   } catch (e) { return emptyStats(); }
 }
 function saveStats() {
@@ -172,19 +182,38 @@ function saveStats() {
 }
 let stats = loadStats();
 
+const CAMP_KEY = 'pong-campaign-v1';
+function loadCamp() {
+  try {
+    const c = JSON.parse(localStorage.getItem(CAMP_KEY));
+    const n = parseInt(c && c.level, 10);
+    return { level: n >= 1 && n <= MAX_LEVEL ? n : 1 };
+  } catch (e) { return { level: 1 }; }
+}
+function saveCamp() {
+  try { localStorage.setItem(CAMP_KEY, JSON.stringify(camp)); } catch (e) {}
+}
+let camp = loadCamp();
+
+function modeKey() {
+  return mode === 'online' ? 'online' : mode === 'campaign' ? 'campaign' : 'ai';
+}
+
 function finishGame(won) {
   if (resultSaved) return;
   resultSaved = true;
-  const k = mode === 'online' ? 'online' : 'ai';
+  const k = modeKey();
   if (won) stats[k].w++; else stats[k].l++;
   saveStats();
   updateStatsLine();
 }
 
 function statsText() {
-  const s = stats[mode === 'online' ? 'online' : 'ai'];
-  const label = mode === 'online' ? 'En ligne' : "Contre l'IA";
-  return label + ' — Victoires : ' + s.w + ' · Défaites : ' + s.l;
+  const k = modeKey();
+  const s = stats[k];
+  const labels = { ai: "Contre l'IA", online: 'En ligne', campaign: 'Campagne' };
+  const lvl = k === 'campaign' ? ' — Niveau ' + curLevel + ' / ' + MAX_LEVEL : '';
+  return labels[k] + lvl + ' — Victoires : ' + s.w + ' · Défaites : ' + s.l;
 }
 
 function updateStatsLine() {
@@ -201,8 +230,22 @@ function setNames(l, r) {
 }
 
 function computeNames() {
-  if (mode === 'ai') return [sanitize(profile.name, 'Joueur'), 'IA'];
+  if (mode !== 'online') return [sanitize(profile.name, 'Joueur'), 'IA'];
   return [sanitize(profile.name, 'Hôte'), oppName || 'Adversaire'];
+}
+
+/* ---------- Niveaux ---------- */
+
+function levelCfg(n) {
+  return {
+    aiSpeed: 2.6 + (n - 1) * 0.4,          // vitesse de l'IA : 2.6 → 6.2
+    err: Math.max(8, 90 - (n - 1) * 9),    // imprécision de l'IA : 90 → 9
+    ballSpeed: 5 + (n - 1) * 0.15          // vitesse de départ de la balle
+  };
+}
+
+function aiCfg() {
+  return mode === 'campaign' ? levelCfg(curLevel) : DIFFS[diff];
 }
 
 /* ---------- Logique de jeu ---------- */
@@ -214,21 +257,44 @@ function helpText() {
 
 function serve(dir) {
   const a = Math.random() * 0.6 - 0.3;
-  ball = { x: W / 2, y: H / 2, vx: dir * 5 * Math.cos(a), vy: 5 * Math.sin(a), speed: 5 };
+  ball = { x: W / 2, y: H / 2, vx: dir * baseSpeed * Math.cos(a), vy: baseSpeed * Math.sin(a), speed: baseSpeed };
 }
 
 function updateScore() { scoreEl.textContent = ls + ' : ' + rs; }
 
+function setupEvents() {
+  obstacles = [];
+  orbs = [];
+  pulseFlash = 0;
+  bigUntil = { L: 0, R: 0 };
+  lastHit = null;
+  nextOrbAt = tick + 240;
+  nextPulseAt = tick + 900;
+  if (mode !== 'campaign') return;
+  // Niveau 3 : barrière centrale avec un passage au milieu
+  if (curLevel >= 3) {
+    obstacles.push({ x: W / 2 - 8, y: 60, w: 16, h: 150 });
+    obstacles.push({ x: W / 2 - 8, y: 290, w: 16, h: 150 });
+  }
+  // Niveau 5 : mur mobile qui monte et descend
+  if (curLevel >= 5) {
+    obstacles.push({ x: 230, y: 205, w: 14, h: 90, baseY: 205, amp: 150, speed: 0.02 });
+  }
+}
+
 function reset() {
-  L = { x: 24, y: H / 2 - PAD_H / 2 };
-  R = { x: W - 24 - PAD_W, y: H / 2 - PAD_H / 2 };
+  L = { x: 24, y: H / 2 - PAD_H / 2, h: PAD_H };
+  R = { x: W - 24 - PAD_W, y: H / 2 - PAD_H / 2, h: PAD_H };
   remoteY = R.y;
   ls = 0; rs = 0; aiErr = 0;
+  setupEvents();
   serve(1);
   updateScore();
 }
 
 function startGame() {
+  if (mode === 'campaign') curLevel = camp.level;
+  baseSpeed = mode === 'campaign' ? levelCfg(curLevel).ballSpeed : 5;
   reset();
   resultSaved = false;
   setNames(...computeNames());
@@ -240,6 +306,9 @@ function startGame() {
 
 function refreshMenu() {
   diffGroup.style.display = mode === 'ai' ? '' : 'none';
+  campGroup.style.display = mode === 'campaign' ? '' : 'none';
+  campInfo.textContent = 'Niveau ' + camp.level + ' / ' + MAX_LEVEL +
+    ' · Orbes bonus dès le niveau 2 · barrière dès le 3 · mur mobile dès le 5 · accélérations dès le 6';
   onlineGroup.style.display = mode === 'online' ? '' : 'none';
   playBtn.style.display = mode === 'online' ? 'none' : '';
   updateStatsLine();
@@ -248,6 +317,7 @@ function refreshMenu() {
 function showMenu() {
   destroyPeer();
   state = 'menu';
+  curLevel = camp.level;
   menuEl.classList.remove('hidden');
   refreshMenu();
   msgEl.textContent = '';
@@ -262,13 +332,72 @@ function togglePlay() {
   else if (state === 'paused') { state = 'playing'; msgEl.textContent = 'Espace pour mettre en pause'; }
 }
 
-function bounce(p, dir) {
-  const rel = (ball.y - (p.y + PAD_H / 2)) / (PAD_H / 2); // -1 .. 1
+function bounce(p, side) {
+  const rel = (ball.y - (p.y + p.h / 2)) / (p.h / 2); // -1 .. 1
   ball.speed = Math.min(ball.speed + 0.35, 12);
   const ang = rel * 0.9;
+  const dir = side === 'L' ? 1 : -1;
   ball.vx = dir * ball.speed * Math.cos(ang);
   ball.vy = ball.speed * Math.sin(ang);
   ball.x = dir > 0 ? p.x + PAD_W + BALL : p.x - BALL;
+  lastHit = side;
+}
+
+function hitObstacle(o) {
+  const bx = ball.x, by = ball.y;
+  if (bx + BALL < o.x || bx - BALL > o.x + o.w || by + BALL < o.y || by - BALL > o.y + o.h) return;
+  const ox = Math.min(bx + BALL - o.x, o.x + o.w - (bx - BALL));
+  const oy = Math.min(by + BALL - o.y, o.y + o.h - (by - BALL));
+  if (ox < oy) {
+    ball.vx = -ball.vx;
+    ball.x += ball.vx > 0 ? ox : -ox;
+  } else {
+    ball.vy = -ball.vy;
+    ball.y += ball.vy > 0 ? oy : -oy;
+  }
+}
+
+function updateEvents() {
+  if (mode !== 'campaign') return;
+  // Niveau 2+ : orbe bonus ; qui la touche voit sa raquette grandir
+  if (curLevel >= 2 && orbs.length === 0 && tick >= nextOrbAt) {
+    orbs.push({ x: W * 0.3 + Math.random() * W * 0.4, y: 60 + Math.random() * (H - 120), r: 12, until: tick + 480 });
+    nextOrbAt = tick + 420;
+  }
+  for (const o of orbs) {
+    if (Math.hypot(ball.x - o.x, ball.y - o.y) < BALL + o.r) {
+      if (lastHit) bigUntil[lastHit] = tick + 300;
+      o.taken = true;
+    }
+  }
+  orbs = orbs.filter(o => !o.taken && tick < o.until);
+  // Niveau 6+ : accélération périodique de la balle
+  if (curLevel >= 6 && tick >= nextPulseAt) {
+    nextPulseAt = tick + 900;
+    pulseFlash = 30;
+    const hyp = Math.hypot(ball.vx, ball.vy);
+    if (hyp > 0) {
+      const sp = Math.min(ball.speed + 0.8, 12);
+      const k = sp / hyp;
+      ball.vx *= k; ball.vy *= k; ball.speed = sp;
+    }
+  }
+}
+
+function clearRound() {
+  orbs = [];
+  bigUntil = { L: 0, R: 0 };
+  lastHit = null;
+}
+
+function campaignResult(won) {
+  if (!won) return "L'IA gagne cette fois. Tu restes au niveau " + curLevel + ". ";
+  if (curLevel >= MAX_LEVEL) {
+    camp.level = 1; saveCamp(); curLevel = 1;
+    return 'Campagne terminée ! Bravo ' + names[0] + ' ! ';
+  }
+  camp.level = curLevel + 1; saveCamp(); curLevel = camp.level;
+  return 'Niveau ' + (curLevel - 1) + ' réussi ! Niveau ' + curLevel + ' débloqué. ';
 }
 
 function point(dir) {
@@ -276,39 +405,51 @@ function point(dir) {
   updateScore();
   if (ls >= WIN || rs >= WIN) {
     state = 'over';
-    if (mode === 'ai' || (mode === 'online' && role === 'host')) finishGame(ls >= WIN);
-    const winner = ls >= WIN ? names[0] : names[1];
+    const won = ls >= WIN;
+    if (mode !== 'online' || role === 'host') finishGame(won);
+    const winner = won ? names[0] : names[1];
     let txt;
-    if (mode === 'ai') txt = ls >= WIN ? 'Bravo ' + winner + ', tu gagnes ! ' : "L'IA gagne cette fois. ";
+    if (mode === 'ai') txt = won ? 'Bravo ' + winner + ', tu gagnes ! ' : "L'IA gagne cette fois. ";
+    else if (mode === 'campaign') txt = campaignResult(won);
     else txt = winner + ' gagne ! ';
     const suffix = mode === 'online' ? 'Espace pour revenir au menu.' : 'Espace pour rejouer · Menu pour changer les réglages.';
     msgEl.textContent = txt + suffix;
+    updateStatsLine();
     return;
   }
+  clearRound();
   state = 'ready';
   serve(dir);
   msgEl.textContent = 'Espace ou clic pour servir';
 }
 
 function step() {
+  tick++;
+  if (pulseFlash > 0) pulseFlash--;
+
   // Raquette gauche : souris ou W / S
+  L.h = tick < bigUntil.L ? PAD_H * 1.5 : PAD_H;
   if (mouseY !== null) {
-    L.y += (mouseY - PAD_H / 2 - L.y) * 0.35;
+    L.y += (mouseY - L.h / 2 - L.y) * 0.35;
   } else {
     L.y += ((keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0)) * 8;
   }
-  L.y = Math.max(0, Math.min(H - PAD_H, L.y));
+  L.y = Math.max(0, Math.min(H - L.h, L.y));
 
   // Raquette droite : joueur distant (en ligne) ou IA
+  R.h = tick < bigUntil.R ? PAD_H * 1.5 : PAD_H;
   if (mode === 'online') {
     R.y = remoteY;
   } else {
-    const cfg = DIFFS[diff];
-    const target = ball.y - PAD_H / 2 + aiErr;
+    const cfg = aiCfg();
+    const target = ball.y - R.h / 2 + aiErr;
     const d = target - R.y;
     R.y += Math.sign(d) * Math.min(Math.abs(d), cfg.aiSpeed);
   }
-  R.y = Math.max(0, Math.min(H - PAD_H, R.y));
+  R.y = Math.max(0, Math.min(H - R.h, R.y));
+
+  // Murs mobiles
+  for (const o of obstacles) if (o.amp) o.y = o.baseY + Math.sin(tick * o.speed) * o.amp;
 
   // Balle
   ball.x += ball.vx;
@@ -316,15 +457,18 @@ function step() {
   if (ball.y < BALL) { ball.y = BALL; ball.vy = -ball.vy; }
   if (ball.y > H - BALL) { ball.y = H - BALL; ball.vy = -ball.vy; }
 
+  for (const o of obstacles) hitObstacle(o);
+  updateEvents();
+
   // Collisions avec les raquettes
   if (ball.vx < 0 && ball.x - BALL <= L.x + PAD_W && ball.x - BALL >= L.x - 10 &&
-      ball.y >= L.y && ball.y <= L.y + PAD_H) {
-    bounce(L, 1);
+      ball.y >= L.y && ball.y <= L.y + L.h) {
+    bounce(L, 'L');
   }
   if (ball.vx > 0 && ball.x + BALL >= R.x && ball.x + BALL <= R.x + PAD_W + 10 &&
-      ball.y >= R.y && ball.y <= R.y + PAD_H) {
-    bounce(R, -1);
-    aiErr = (Math.random() * 2 - 1) * DIFFS[diff].err;
+      ball.y >= R.y && ball.y <= R.y + R.h) {
+    bounce(R, 'R');
+    aiErr = (Math.random() * 2 - 1) * aiCfg().err;
   }
 
   // Points
@@ -368,28 +512,107 @@ function drawGhibliBackground() {
   ctx.fill();
 }
 
-const bgCache = {};
-
-function getBgImage(style) {
-  if (!(style in bgCache)) {
-    const img = new Image();
-    img.onload = () => { bgCache[style] = img; };
-    img.onerror = () => { bgCache[style] = null; }; // image absente : fond de secours
-    img.src = BG_IMAGES[style];
-    bgCache[style] = undefined; // en cours de chargement
+// Feuilles qui tombent (ambiance Ghibli)
+const leaves = Array.from({ length: 10 }, () => ({
+  x: Math.random() * W, y: Math.random() * H, s: 0.6 + Math.random() * 0.6, sp: 0.3 + Math.random() * 0.4
+}));
+function drawLeaves() {
+  ctx.fillStyle = 'rgba(120,190,110,0.85)';
+  for (const l of leaves) {
+    l.y += l.sp;
+    l.x += Math.sin((tick + l.y) / 30) * 0.6;
+    if (l.y > H + 10) { l.y = -10; l.x = Math.random() * W; }
+    ctx.beginPath();
+    ctx.ellipse(l.x, l.y, 7 * l.s, 4 * l.s, Math.sin(l.y / 20), 0, Math.PI * 2);
+    ctx.fill();
   }
-  return bgCache[style] || null;
+}
+
+// Grille de sol en perspective et horizon néon (ambiance Tron)
+function drawTronBackground(t) {
+  const hz = H * 0.55;
+  const g = ctx.createLinearGradient(0, 0, 0, hz);
+  g.addColorStop(0, '#02040a');
+  g.addColorStop(1, '#0a1a2c');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, hz);
+  ctx.fillStyle = t.field;
+  ctx.fillRect(0, hz, W, H - hz);
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,229,255,0.28)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 10; i++) {
+    const y = hz + (H - hz) * Math.pow(i / 10, 2);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  for (let x = -W; x <= 2 * W; x += 80) {
+    ctx.beginPath(); ctx.moveTo(W / 2 + (x - W / 2) * 0.15, hz); ctx.lineTo(x, H); ctx.stroke();
+  }
+  ctx.shadowColor = t.accent; ctx.shadowBlur = 12;
+  ctx.strokeStyle = t.accent; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, hz); ctx.lineTo(W, hz); ctx.stroke();
+  ctx.restore();
+}
+
+// Murs : planches de bois et mousse (Ghibli) ou mur lumineux (Tron)
+function drawObstacle(o, ghibli) {
+  if (ghibli) {
+    ctx.fillStyle = '#b98b5e';
+    ctx.fillRect(o.x, o.y, o.w, o.h);
+    ctx.strokeStyle = '#7a5635'; ctx.lineWidth = 2;
+    ctx.strokeRect(o.x, o.y, o.w, o.h);
+    ctx.fillStyle = '#7fb069';
+    ctx.fillRect(o.x - 2, o.y, o.w + 4, 6);
+  } else {
+    ctx.save();
+    ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 14;
+    ctx.fillStyle = 'rgba(0,229,255,0.18)';
+    ctx.fillRect(o.x, o.y, o.w, o.h);
+    ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2;
+    ctx.strokeRect(o.x, o.y, o.w, o.h);
+    ctx.restore();
+  }
+}
+
+// Orbe bonus : esprit de suie (Ghibli) ou cube de données (Tron)
+function drawOrb(o, ghibli) {
+  if (ghibli) {
+    ctx.fillStyle = '#262626';
+    ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(o.x - 4, o.y - 2, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(o.x + 4, o.y - 2, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#262626';
+    ctx.beginPath(); ctx.arc(o.x - 4, o.y - 2, 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(o.x + 4, o.y - 2, 1.6, 0, Math.PI * 2); ctx.fill();
+  } else {
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    ctx.rotate(tick * 0.06);
+    ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 16;
+    ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2;
+    ctx.fillStyle = 'rgba(0,229,255,0.25)';
+    ctx.fillRect(-o.r, -o.r, o.r * 2, o.r * 2);
+    ctx.strokeRect(-o.r, -o.r, o.r * 2, o.r * 2);
+    ctx.restore();
+  }
+}
+
+function drawPaddle(p, color) {
+  ctx.shadowColor = color;
+  ctx.shadowBlur = p.h > PAD_H ? 16 : 0; // raquette agrandie : halo
+  ctx.fillStyle = color;
+  ctx.fillRect(p.x, p.y, PAD_W, p.h);
+  ctx.shadowBlur = 0;
 }
 
 function draw() {
   const t = currentStyle();
   const ghibli = profile.style === 'ghibli';
-  const img = getBgImage(profile.style);
 
-  // Fond : image fixe si elle existe, sinon le fond de secours
-  if (img) ctx.drawImage(img, 0, 0, W, H);
-  else if (ghibli) drawGhibliBackground();
-  else { ctx.fillStyle = t.field; ctx.fillRect(0, 0, W, H); }
+  if (ghibli) { drawGhibliBackground(); drawLeaves(); }
+  else drawTronBackground(t);
 
   ctx.setLineDash([10, 12]);
   ctx.strokeStyle = t.line;
@@ -397,12 +620,19 @@ function draw() {
   ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
   ctx.setLineDash([]);
 
-  ctx.fillStyle = PADDLE_LEFT;
-  ctx.fillRect(L.x, L.y, PAD_W, PAD_H);
-  ctx.fillStyle = PADDLE_RIGHT;
-  ctx.fillRect(R.x, R.y, PAD_W, PAD_H);
+  for (const o of obstacles) drawObstacle(o, ghibli);
+  for (const o of orbs) drawOrb(o, ghibli);
 
-  // Balle : jaune fluo en nuit classique, rose pâle fluo en Ghibli
+  drawPaddle(L, PADDLE_LEFT);
+  drawPaddle(R, PADDLE_RIGHT);
+
+  // Accélération : flash d'écran
+  if (pulseFlash > 0) {
+    ctx.fillStyle = ghibli ? 'rgba(255,255,255,' + (pulseFlash / 90) + ')' : 'rgba(0,229,255,' + (pulseFlash / 120) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Balle : jaune fluo en style Tron, rose pâle fluo en Ghibli
   ctx.shadowColor = t.glow;
   ctx.shadowBlur = 18;
   ctx.fillStyle = t.ball;
@@ -415,8 +645,8 @@ function draw() {
 const musicIn = document.getElementById('music'), volumeIn = document.getElementById('volume');
 const NOTE_OFFSET = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const MUSIC = {
-  classic: { bpm: 84, wave: 'triangle', notes: ['A2', 'E3', 'A3', 'C4', 'E4', 'C4', 'A3', 'E3'] },
-  ghibli:  { bpm: 96, wave: 'sine',     notes: ['C5', 'D5', 'E5', 'G5', 'A5', 'G5', 'E5', 'D5'] }
+  tron:   { bpm: 84, wave: 'triangle', notes: ['A2', 'E3', 'A3', 'C4', 'E4', 'C4', 'A3', 'E3'] },
+  ghibli: { bpm: 96, wave: 'sine',     notes: ['C5', 'D5', 'E5', 'G5', 'A5', 'G5', 'E5', 'D5'] }
 };
 
 function noteFreq(name) {
@@ -455,7 +685,7 @@ function playNote(name, when, dur, wave) {
 }
 
 function scheduleMusic() {
-  const cfg = MUSIC[profile.style === 'ghibli' ? 'ghibli' : 'classic'];
+  const cfg = MUSIC[profile.style === 'ghibli' ? 'ghibli' : 'tron'];
   const beat = 60 / cfg.bpm;
   while (nextNoteTime < audioCtx.currentTime + 0.3) {
     playNote(cfg.notes[noteIdx % cfg.notes.length], nextNoteTime, beat * 0.9, cfg.wave);
@@ -561,9 +791,9 @@ function sendSnapshot() {
 function guestFrame() {
   if (!conn || !conn.open) return;
   // Raquette du joueur distant (droite), envoyée à l'hôte
-  if (mouseY !== null) R.y += (mouseY - PAD_H / 2 - R.y) * 0.35;
+  if (mouseY !== null) R.y += (mouseY - R.h / 2 - R.y) * 0.35;
   else R.y += ((keys['arrowdown'] ? 1 : 0) - (keys['arrowup'] ? 1 : 0)) * 8;
-  R.y = Math.max(0, Math.min(H - PAD_H, R.y));
+  R.y = Math.max(0, Math.min(H - R.h, R.y));
   conn.send({ t: 'p', y: R.y });
   // Affiche l'état reçu de l'hôte
   if (snap) {
@@ -635,7 +865,10 @@ document.getElementById('joinBtn').addEventListener('click', () => {
 document.getElementById('resetStats').addEventListener('click', () => {
   stats = emptyStats();
   saveStats();
-  updateStatsLine();
+  camp = { level: 1 };
+  saveCamp();
+  curLevel = 1;
+  refreshMenu();
 });
 
 pseudoIn.addEventListener('input', () => {
