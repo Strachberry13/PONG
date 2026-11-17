@@ -4,38 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pong</title>
-<style>
-  html, body { margin:0; height:100%; font-family: system-ui, -apple-system, sans-serif; overflow:hidden; background:#0b0f1a; color:#e6edf7; }
-  #wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:8px; padding:10px; box-sizing:border-box; }
-  #scoreRow { display:flex; align-items:center; gap:18px; }
-  #score { font-size:2.2rem; font-variant-numeric: tabular-nums; letter-spacing:.2em; }
-  .pname { font-size:1.1rem; font-weight:600; min-width:110px; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #nL { text-align:right; }
-  #nR { text-align:left; }
-  #stats { font-size:.85rem; opacity:.7; min-height:1.2em; font-variant-numeric: tabular-nums; }
-  canvas { border:2px solid #24314d; border-radius:10px; width:min(100%,800px); max-height:65vh; aspect-ratio:800/500; touch-action:none; cursor:none; }
-  #msg { font-size:.95rem; opacity:.85; min-height:1.3em; text-align:center; }
-  button { background:#2b6cff; color:#fff; border:0; border-radius:8px; padding:8px 16px; font-size:1rem; cursor:pointer; }
-  button.ghost { background:#1a2540; color:#c9d6ef; border:1px solid #24314d; }
-  .overlay { position:fixed; inset:0; background:rgba(5,8,16,.9); display:flex; padding:16px; box-sizing:border-box; overflow:auto; }
-  .overlay.hidden { display:none; }
-  .card { background:#101829; border:1px solid #24314d; border-radius:14px; padding:22px 26px; width:min(440px,100%); display:flex; flex-direction:column; gap:16px; box-sizing:border-box; margin:auto; color:#e6edf7; }
-  .card h1 { margin:0; text-align:center; font-size:2rem; letter-spacing:.15em; }
-  .label { font-size:.85rem; text-transform:uppercase; letter-spacing:.1em; opacity:.7; margin-bottom:6px; }
-  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .opt { flex:1; background:#1a2540; color:#c9d6ef; border:1px solid #24314d; }
-  .opt.on { background:#2b6cff; color:#fff; border-color:#2b6cff; }
-  .primary { font-size:1.1rem; padding:12px; }
-  .hint { font-size:.8rem; opacity:.7; text-align:center; line-height:1.5; min-height:1.2em; }
-  .txt { padding:8px; border-radius:8px; border:1px solid #24314d; background:#0b0f1a; color:#fff; font-size:1rem; min-width:0; box-sizing:border-box; flex:1; }
-  #codeIn { text-transform:uppercase; letter-spacing:.2em; }
-  #bar { display:flex; gap:8px; }
-  details summary { cursor:pointer; opacity:.85; }
-  .custom { display:flex; flex-direction:column; gap:12px; margin-top:12px; }
-  .custom label { display:flex; align-items:center; gap:8px; font-size:.9rem; }
-  input[type=color] { width:44px; height:32px; border:0; background:none; padding:0; cursor:pointer; }
-  input[type=checkbox] { width:18px; height:18px; cursor:pointer; }
-</style>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="wrap">
